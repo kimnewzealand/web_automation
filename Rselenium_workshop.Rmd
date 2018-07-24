@@ -1,0 +1,282 @@
+---
+title: "RSelenium workshop useR2018! Brisbane"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+These are my notes from the *Ultimate online collection toolbox: Combining RSelenium and Rvest* workshop at useR2018! Brisbane for the second part of the workshop using Docker and RSelenium. 
+
+[user2018! Workshop notes](https://gist.github.com/HanjoStudy/aeb331b7a277be9639f3cfb3bf875ba2)
+
+I also found his RSelenium [vignette](http://rpubs.com/johndharrison/RSelenium-Basics) as a good reference.
+
+```{r}
+# We will be using `devtools` to install the necessary dependencies from `github`
+
+# devtools::install_github("johndharrison/binman")
+# devtools::install_github("johndharrison/wdman")
+# devtools::install_github("ropensci/RSelenium")
+
+# Once you have installed all the packages, remember to load `RSelenium` into your workspace
+
+library(RSelenium)
+library(rvest)
+library(tidyverse)
+```
+
+#  Using Docker
+
+RSelenium is notorious for instability and compatibility issues. It is thus amazing that they now have a docker image for headless webdrivers. Running a docker container standardises the build across OS's and removes many of the issues user may have relating to JAVA/browser version/selenium version
+
+
+After installing Docker toolbox and open quickstart terminal. Take note of the IP address.
+
+Docker is configured to use the default machine with IP 192.168.99.100.
+
+Now open dockerhub.com and go to selenium nodes to get a **dockerfile**
+https://hub.docker.com/u/selenium/ which is the source code of an image.
+
+Build the **dockerfile** to create the image of the container. The image is just the "compiled version" of the ["source code" which is the Dockerfile](http://blog.manageacloud.com/entry/dockerising-puppet).
+
+Once you have the image of the container, you should redistribute it using the registry. The registry is like a git repository -- you can push and pull images.
+
+We will use standalone-chrome-debug/ and copy the pull command into the terminal, use latest **image**. 
+
+Next, you can use the **image** to run containers. A running container is very similar, in many aspects, to a virtual machine (but without the hypervisor).
+ 
+ https://stackoverflow.com/questions/23735149/what-is-the-difference-between-a-docker-image-and-a-container
+> To use a programming metaphor, if an image is a class, then a container is an instance of a class-a runtime object.
+
+Local images can be listed by running docker images in the terminal.
+
+Important Docker commands to remember include run, stop and rm.
+
+# Starting your Selenium Server 
+
+docker run --name chrome  -v /dev/shm:/dev/shm -d -p 4445:4444 -p 5901:5900 selenium/standalone-chrome-debug:latest
+
+* `-name` name your container, otherwise docker will with a funny name ;-)
+* `-v` mount volume
+* `-d` detached mode to be a background process
+* `-p` port mapping (external:internal) open ports in debug mode
+ `selenium/standalone-chrome-debug:latest
+
+
+
+# Attach your viewport (TightVNC & Vinagre)
+
+We can use Virtual Network Computing (VNC) viewers to view what is happening
+
+add the IP and port with 192.168.99.100::5901 password is secret as per the standalone-chrome-debug documentation
+
+```{r}
+# Open and navigate
+
+# This command sets up a list of the parameters we are going to send to selenium to kick off
+remDr <- remoteDriver(remoteServerAddr = "192.168.99.100",
+                      port = 4445L, 
+                      browser = "chrome")
+
+# Notice the strange notation? Thats because of Java object.method
+remDr$open()
+```
+
+
+Finally - RSelenium is operational, check in the VNC
+ * Quick overview of the tools you will be using
+ * Useful functions written in javascript that I find useful
+ * Obsure and fun functions
+ * Combine it all into a case study.
+ 
+
+```{r}
+# Use method navigate to drive your browser around
+remDr$navigate
+remDr$navigate("http://www.google.com")
+remDr$navigate("http://www.bing.com")
+# Use methods back and forward to jump between pages
+remDr$goBack()
+remDr$goForward()
+```
+ 
+# Using keys and Scrolling
+ 
+```{r}
+# We can send various keys to the Selenium
+RSelenium:::selKeys %>% names()
+
+# Note the notation of the command object$method(list = "command)
+remDr$sendKeysToActiveElement(list(key = "page_down"))
+remDr$sendKeysToActiveElement(list(key = "page_up"))
+
+# We also send Javascript to the page - this becomes important if you want to know how far down you have scrolled...
+remDr$executeScript("return window.scrollY", args = list(1))
+remDr$executeScript("return document.body.scrollHeight", args = list(1))
+
+remDr$executeScript("return window.innerHeight", args = list(1))
+remDr$executeScript("return window.innerWidth", args = list(1))
+
+remDr$sendKeysToActiveElement(list(key = "home"))
+remDr$sendKeysToActiveElement(list(key = "end"))
+```
+ 
+# Interacting with the DOM
+
+```{r}
+# The DOM stands for the Document Object Model. It is a cross-platform and language-independent convention for representing and interacting with objects in HTML, XHTML and XML documents. To get the whole DOM:
+  
+gethtml <- function(remDr){
+remDr$getPageSource() %>% 
+    .[[1]] %>% 
+    read_html()
+}
+remDr %>% gethtml(.) 
+
+# To interact with the DOM, we will use the `findElement` method:
+  
+#  Search by id, class, selector, xpath
+
+remDr$navigate("http://www.google.com/")
+
+# This is equivalent to html_nodes
+webElem <- remDr$findElement(using = 'class', "gsfi")
+
+webElem$highlightElement()
+ 
+# Having identified the element we want to interact with, we have a couple of methods that we can apply to the object:
+
+webElem$clickElement()
+webElem$click(2)
+
+# Cannot interact with objects not on screen. Can only click on objects in view
+remDr$mouseMoveToLocation(webElement = webElem)
+
+webElem$sendKeysToActiveElement(list(key = 'down_arrow', key = 'down_arrow', key = 'enter'))
+webElem$sendKeysToActiveElement(list("Hallo World", key = 'enter'))
+```
+# Nice to have functions
+
+```{r}
+remDr$maxWindowSize()
+remDr$getTitle()
+remDr$screenshot(display = TRUE)
+
+b64out<- remDr$screenshot()
+writeBin(RCurl::base64Decode(b64out, "raw"), 'screenshot.png')
+
+# Scroll into view
+remDr$executeScript("arguments[0].scrollIntoView(true);", args = list(webElem))
+
+# Building a RSelenium pipe function
+
+# RSelenium has 2 types of commands:
+#   
+# * Those with side-effects (action)
+# * Those that returns information we want to push into `rvest`
+# 
+# For the 1st case, we would want to return the driver object as the state of it has changed
+
+navi <- function(remDr, site = "www.google.com"){
+  remDr$navigate(site)
+  return(remDr)
+}
+
+remDr %>% navi(., "www.google.com")
+```
+
+
+# Case Study: A Tour of the winelands!
+
+
+Australia is famous for its wines! Lets find out a little bit more about the wine region 
+ * Go to vivino.com
+ * Collect 2 pages worth of information
+  Name of wine farm, name of wine, star rating, count of ratings
+ 
+```{r go to website}
+# Navigate to vivino website
+remDr$navigate("https://www.vivino.com/")
+# Check the url
+remDr$getCurrentUrl()
+
+# Let's use our gethtml function to get the DOM
+vinohtml <- remDr %>% gethtml(.)
+# Check the class
+class(vinohtml)
+
+# Next isolate the button we need to click on to explore wines. We could find the name from right click and inspect to find CSS selector
+webElem <- remDr$findElement("css", '.explore-widget__main__submit__button')
+webElem$getElementAttribute("class")
+webElem$getElementAttribute("id")
+# Highlight and click button
+webElem$highlightElement()
+webElem$clickElement()
+# Now we are in the next page wee can create a scroll to and highlight function
+scrollTo <- function(remDr, webElem){
+  remDr$executeScript("arguments[0].scrollIntoView(true);", args = list(webElem))
+  webElem$highlightElement()
+}
+# I use xpath here, just because I want to illustrates the handy function: starts with
+# I am trying to isolate where I can fill in the name of the country I am looking to search
+webElem <- remDr$findElements("xpath", '//input[starts-with(@class, "filterPills")]')
+
+scrollTo(remDr, webElem[[2]])
+
+webElem[[2]]$clickElement()
+webElem[[2]]$sendKeysToActiveElement(list("Australia"))
+
+webElem <- remDr$findElements("css", '.pill__inner--7gfKn')
+
+# How I identify the correct webelem to click on
+country_elem <- webElem %>% 
+  sapply(., function(x) x$getElementText()) %>% 
+  reduce(c) %>% 
+  grepl("Australia", .) %>% 
+  which
+
+scrollTo(remDr, webElem[[country_elem]])
+
+webElem[[country_elem]]$clickElement()
+
+# Some pages need you to scroll to the bottom in order for more content to load. Vivino is one of them
+
+remDr$executeScript("return window.scrollY", args = list(1))
+remDr$executeScript("return document.body.scrollHeight", args = list(1))
+
+remDr$sendKeysToActiveElement(list(key = "end"))
+remDr$executeScript("return window.scrollY", args = list(1))
+
+# Now we done with RSelenium, on to rvest! We will read the this page to and XML document
+
+pg <- remDr$getPageSource() %>% .[[1]] %>% 
+  read_html()
+# We will collect specific info frfom this page using the CSS selector nodes and create a function collect_info
+collect_info <- function(pg){
+  farm <- pg %>% html_nodes(".vintageTitle__winery--2YoIr") %>% 
+    html_text()
+  
+  wine <- pg %>% html_nodes(".vintageTitle__wine--U7t9G") %>% 
+    html_text()
+  
+  rating <- pg %>% html_nodes("span.vivinoRating__rating--4Oti3") %>% 
+    html_text() %>% 
+    as.numeric
+  
+  rating_count <- pg %>% html_nodes("span.vivinoRating__ratingCount--NmiVg") %>% 
+    html_text() %>% 
+    gsub("[^0-9]", "",.) %>% 
+    as.numeric
+  
+  data.frame(farm, wine, rating, rating_count)
+}
+
+collect_info(pg)
+
+
+```
+
